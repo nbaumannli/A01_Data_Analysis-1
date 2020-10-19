@@ -1,62 +1,529 @@
 ---
 title: "Portfoliomanagement and Financial Analysis - Assignment 1"
 subtitle: "Submit until Monday 2020-09-21, 13:00"
-author: "Lastname, Surname"
+author: "Baumann, Nicolas"
 output: html_notebook
 ---
 
-
+# Packaged Load 
 ```{r load_packs}
-pacman::p_load(tidyverse,tidyquant,FFdownload)
+pacman::p_load(tidyverse,
+               tidyquant,
+               FFdownload,
+               timeDate,
+               timetk,
+               xts,
+               magrittr,
+               tidyr)
 ```
 
 For all exercises please refer to my book [Tidy Portfoliomanagement in R](https://bookdown.org/sstoeckl/Tidy_Portfoliomanagement_in_R). Unfortunately some functions (e.g. `get_exchange()`) are not working on rstudio.cloud, so please try to solve the exercises without. Also remember, that ecverything you do below must be **explained** to me (why? what does this mean? what is the interpretation?). If you have any questions or problems, please refer to the assignment forum on moodle.
 
-## Exercise 1: xts
+# Exercise 1: xts
 
+## Task
 Create a daily time series for `r lubridate::year(Sys.time())`:
 
 1. Find the subset of first and last days per month/quarter (uniquely)
 2. Take December `r lubridate::year(Sys.time())-1` and remove all weekends and holidays in Zurich (Tokyo)
 3. create a series of five dates & times in New York. Show them for New York, London and Belgrade
 
-
-## Exercise 2: Download Financial Data and Merge
-
-Download information on all stocks currently part of the S&P500. Select 10 that have data back to 2000. Additionally download the S&P 500 index and the four Fama-French factors including the risk-free rate (using my package [`ffdownload`](https://github.com/sstoeckl/ffdownload)). Merge all data together and calculate returns (simple or continuous returns?).
-Split your data in two files: One holding daily returns and one with monthly returns. Additionally show how to we could get from long to wide format to transfer between `tibble` (`tsibble`) and xts.
+## Nessecairy Theorie
+NONE
 
 ```{r}
-?FFdownload()
-tempf <- tempfile(fileext = ".RData"); tempd <- tempdir(); temptxt <- tempfile(fileext = ".txt")
+# Exercise 1.1
+
+## Creation of Time Dates Variant Nr 1
+dates1 <- seq(as.Date("2020-01-01"), length=365, by="day"); dates1
+dates2 <- seq(as.Date("2020-01-01"), length=12, by="month"); dates2
+
+## Creation of Time Dates Variant Nr 2
+dates <- timeSequence(from = "2020-01-01", to = Sys.time(), by = "day")
+
+## Task
+first_day_in_month    <- timeFirstDayInMonth(dates2);first_day_in_month
+last_day_in_month     <- timeLastDayInMonth(dates2);last_day_in_month 
+first_day_in_quarter  <- timeFirstDayInQuarter(dates2);first_day_in_quarter 
+last_day_in_quarter   <- timeLastDayInQuarter(dates2);last_day_in_quarter
+```
+
+```{r}
+# Exercise 1.2
+dates3 <- timeSequence(from = "2019-12-01", to = Sys.time() , by = "day"); dates3
+
+# Select only weekdsay
+dates_isWeekday <- dates3[isWeekday(dates3)]; dates_isWeekday 
+
+# Check for weekdays
+dayOfWeek(dates_isWeekday) 
+
+# Select only BusinessDays of Zurich
+dates_isBusinessDays_ZH <- dates3[isBizday(dates3, holidayZURICH(2019))]; dates_isBusinessDays_ZH 
+
+dayOfWeek(dates_isBusinessDays_ZH)
+
+
+```
+
+```{r}
+# Exercise 1.2
+D_T_NY2 <- timeSequence(from = "2019-12-01", to = Sys.time(), by = "min", length.out = 5); D_T_NY2
+# or 
+D_T_NY <- seq(as.timeDate(as.POSIXct("2009-01-05 14:19:12", format="%Y-%m-%d %H:%M:%S", tz="UTC")), length=5, by="day"); D_T_NY
+
+
+timeDate(D_T_NY2, zone = "NewYork", FinCenter = "Tokyo")
+
+timeDate(D_T_NY2, zone = "NewYork", FinCenter = "London")
+
+timeDate(D_T_NY2, zone = "NewYork", FinCenter = "Belgrade")
+```
+
+# Exercise 2: Download Financial Data and Merge
+
+1) Download information on all stocks currently part of the S&P500. 
+2) Select 10 that have data back to 2000. 
+3) Additionally download the S&P 500 index and the four Fama-French factors including the risk-free rate (using my package [`ffdownload`](https://github.com/sstoeckl/ffdownload)). 
+4) Merge all data together and calculate returns (simple or continuous returns?).
+5) Split your data in two files: One holding daily returns and one with monthly returns. 
+6) Additionally show how to we could get from long to wide format to transfer between `tibble` (`tsibble`) and xts.
+
+
+```{r}
+# 1) Download information on all stocks currently part of the S&P500. 
+
+## Some commands for getting an overview about available:
+
+### 1. exchanges - Get the list of stock exchange options
+tq_exchange_options()
+
+### 2. indices - Get the list of stock index options
+tq_index_options() 
+
+### 3. data sources  
+tq_get_options()
+
+### 4. Get all stocks in a stock-exchange
+tq_exchange("NASDAQ")
+
+
+# Information on S&P500 V1
+sp500 <- tq_index("SP500")
+sp500
+
+# Getting an overview about all information on all stocks currently part of the S&P500!
+glimpse(sp500)
+
+# To have 10 stocks that have data back to 2000, we look at the exchange NYSE, 
+# where we have the information about the IPO Year (variables "ipo.year")
+nyse <- tq_exchange("NYSE") 
+glimpse(nyse)
+# We have now an overview about all ipo years on all stocks currently at the NYSE!
+
+```
+
+```{r}
+# 2) Select 10 that have data back to 2000 and SP500
+
+#Selection of 10 that have data back to 2000 and calculation of the daily return
+startDate <- "2000-09-01"
+stockSelection <- c('T', 'WMT', 'MSFT', 'BAC', 'PG', 'MCD', 'JPM', 'LIN', 'VZ', 'INTC')
+
+# First with daily values
+stockSelectionDaily <- stockSelection %>%
+  tq_get(get = "stock.prices", 
+         from = startDate, 
+         to = TODAY()) %>%
+  group_by(symbol) %>% #Group columns by the same value
+  tq_transmute(select = adjusted, 
+               mutate_fun = periodReturn, 
+               period = "daily", 
+               col_rename = 'return') #Calculation of the daily return
+
+#Selection of the SP500 and calculation of the daily return
+sp500Daily <- tq_get("^GSPC", 
+                     get = "stock.prices", 
+                     from = startDate, to = TODAY()) %>%
+  tq_transmute(select = adjusted, 
+               mutate_fun = periodReturn, 
+               period = "daily", 
+               col_rename = 'SP500') #Calculation of daily returns from index
+
+# The same but with monthly dates
+stockSelectionMonthly <- stockSelection %>%
+ tq_get(get = "stock.prices", 
+        from = startDate, 
+        to = TODAY()) %>%
+  group_by(symbol) %>%
+  tq_transmute(select = adjusted, 
+               mutate_fun = periodReturn, 
+               period = "monthly", 
+               col_rename = 'return')
+
+sp500Monthly <- tq_get("^GSPC", 
+                       get = "stock.prices", 
+                       from = startDate, 
+                       to = TODAY()) %>%
+  tq_transmute(select = adjusted, 
+               mutate_fun = periodReturn, 
+               period = "monthly", 
+               col_rename = 'SP500')
+
+# Preparing the data and merging it
+stockSelectionDaily_cols <- stockSelectionDaily %>% 
+  spread(symbol, return) #a column with the returns is created for the companies
+
+stockSelectionMonthly_cols <- stockSelectionMonthly %>% 
+  spread(symbol, return)
+
+# stockSelectionDaily_xts <- tk_xts(stockSelectionDaily_cols, date_var = date)
+
+dataDaily <- stockSelectionDaily_cols %>% 
+  merge(sp500Daily, by = "date") #where the dates are the same, they are in the same line (only if there is an entry for both)
+
+dataMonthly <- stockSelectionMonthly_cols %>% 
+  merge(sp500Monthly, by = "date")
+```
+
+```{r}
+
+# 3) Additionally download the four Fama-French factors including the risk-free rate (using my package [`ffdownload`](https://github.com/sstoeckl/ffdownload)).
+
+
+#Downloading the datasets from Kenneth French's Website.
+tmpf <- tempfile(fileext = ".RData") 
+tmpd <- tempdir()
+tmptxt <- tempfile(fileext = ".txt")
 inputlist <- c("F-F_Research_Data_Factors","F-F_Momentum_Factor","F-F_ST_Reversal_Factor","F-F_LT_Reversal_Factor")
 # Now process only these files if they can be matched (download only)
-FFdownload(exclude_daily=TRUE,tempdir=tempd,download=TRUE,download_only=FALSE,inputlist=inputlist)
+FFdownload(output_file = tmpf,      # name of the .RData file to be saved (include path if necessary)
+           tempdir = tmpd,          #	specify if you want to keep downloaded files somewhere save.
+           exclude_daily = FALSE,   # excludes the daily datasets (are not downloaded) ==> speeds the process up considerably
+           download = TRUE,         # TRUE if you actually want to download again. FALSE (specify tempdir) to keep processing the already downloaded files
+           download_only = FALSE,   # FALSE if you want to process all your downloaded files (inputlist!) at once
+           listsave=tmptxt,         # the list of unzipped files is saved here
+           inputlist=inputlist)     # if not NULL, FFdownload tries to match the names from the list with the list of zip-files
+load(tmpf)
+list.files(tmpd)
 
-tempf2 <- tempfile(fileext = ".RData"); tempd2 <- tempdir()
-FFdownload(output_file = tempf2,tempdir = tempd2,exclude_daily = TRUE, download = TRUE, download_only=FALSE, listsave=temptxt)
-load(tempf2)
-FFdownload$x_25_Portfolios_5x5$monthly$average_value_weighted_returns
+# Prepare Fama-French data and merge it 
+
+## Daily!! -> timeseries converted from Fama French to tibble
+ffFactorsDaily <- tk_tbl(FFdownload$`x_F-F_Research_Data_Factors`$daily$Temp2, 
+                         timetk_idx = TRUE, 
+                         rename_index = "date") 
+
+### Selection for the relevant data, which are greater or equal the start date
+ffFactorsDaily <- ffFactorsDaily[ffFactorsDaily$date >= startDate,,,,] 
+
+#### The last data will be output #Fama-French data is only available until 30.06.2020 as of today
+tail(ffFactorsDaily) 
+
+# Merge the Data with the Daily Data from before
+dataDaily <- dataDaily %>% 
+  merge(ffFactorsDaily, 
+        by = "date")
+
+# Same for monthly -> timeseries converted from Fama French to tibble
+ffFactorsMonthly <- tk_tbl(FFdownload$`x_F-F_Research_Data_Factors`$monthly$Temp2, 
+                           timetk_idx = TRUE, 
+                           rename_index = "date")%>%
+  mutate(date=as.Date(date, 
+                      frac=1))
+
+### Selection for the relevant data, which are greater or equal the start date
+ffFactorsMonthly <- ffFactorsMonthly[ffFactorsMonthly$date >= startDate,,,,]
+
+#### The last data will be output #Fama-French data is only available until 30.06.2020 as of today
+tail(ffFactorsMonthly)
+
+# Merge the Data with the Monthly Data from before
+dataMonthly <- dataMonthly %>% 
+  merge(ffFactorsMonthly, 
+        by = "date")
+
+# Export work into csv
+write.table(dataDaily , file = "./dataDaily.csv")
+write.table(dataMonthly, file = "./dataMonthly.csv")
+
+# Transform tibble into time series
+
+dailyTimeSeries <- xts(dataDaily[,-1], order.by = dataDaily[,1])
+monthlyTimeSeries <- xts(dataMonthly[,-1], order.by = dataMonthly[,1]) 
+#[row,column] -1=without first column , = we want all rows
+
+
+
+```
+```{r}
+#10 S&P 500 stocks with IPO<2000
+
+SP <- tq_index("SP500")
+NASDAQ <- tq_exchange("NASDAQ")
+NYSE <- tq_exchange("NYSE")
+
+ 
+stocks.selection <- SP %>% 
+inner_join(rbind(NYSE,NASDAQ) %>% 
+             select(symbol,
+                    last.sale.price,
+                    market.cap,
+                    ipo.year),
+           by=c("symbol")) %>% # join datasets
+  filter(ipo.year<2000&!is.na(market.cap)) %>% # filter years with ipo<2000 or ipo=NA
+  arrange(desc(weight)) %>% # sort in descending order
+  slice(1:10)
+
+  
+# Additional Data for the S&P500-index
+
+stocks.prices <- stocks.selection$symbol %>%  # daily prices
+    tq_get(get  = "stock.prices",
+           from = "2000-01-01",
+           to = "2019-12-31") %>%
+    group_by(symbol)
+
+    
+index.prices <- "^GSPC" %>% 
+  tq_get(get  = "stock.prices",
+         from = "2000-01-01",
+         to = "2019-12-31") 
+stocks.prices %>% 
+  slice(1:2) # show the first two entries of each group
+
+# Dividends and Stock Splits
+stocks.dividends <- stocks.selection$symbol %>% 
+    tq_get(get  = "dividends",
+           from = "2000-01-01",
+           to = "2019-12-31") %>%
+    group_by(symbol)
+    
+stocks.splits <- stocks.selection$symbol %>% 
+    tq_get(get  = "splits",
+           from = "2000-01-01",
+           to = "2019-12-31") %>%
+    group_by(symbol)
+
+#Stock Ratios does not work
+stocks.ratios <- stocks.selection$symbol %>% 
+    tq_get(get  = "key.ratios",from = "2000-01-01",to = "2019-12-31") %>%
+    group_by(symbol)
+
+# Fama-French Data
+factors <- FFdownload$`x_F-F_Research_Data_Factors`$monthly$Temp2 %>% 
+          tk_tbl(rename_index="date") %>% # make tibble
+          mutate(date=as.Date(date, frac=1)) %>% # make proper month-end date format
+          gather(key=FFvar,value = price,-date) # gather into tidy format
+
+factors %>% group_by(FFvar) %>% slice(1:2)
+
+#Stock prices monthly
+stocks.prices.monthly <- stocks.prices %>% 
+                  tq_transmute(select = c(adjusted,volume), # which column to choose
+                               mutate_fun = to.monthly,     # funtion: make monthly series
+                               indexAt = "lastof") %>%      
+                  ungroup() %>% mutate(date=as.yearmon(date)) 
+
+# Stock Returns monthly
+stocks.returns <- stocks.prices %>%
+  tq_transmute(select = adjusted,
+               mutate_fun = periodReturn,   # create monthly  returns
+               period="monthly",
+               type="arithmetic") %>%
+  ungroup() %>% 
+  mutate(date=as.yearmon(date))
+
+save(stocks.returns,file="stocksreturn_monthly.RData")
+
+# Stocks Return Daily
+stocks.returns.daily <- stocks.prices %>% 
+  tq_transmute(select = adjusted,
+               mutate_fun = periodReturn,   # create daily  returns
+               period="daily",
+               type="arithmetic") %>% 
+  ungroup() %>% 
+  mutate(date=as.yearmon(date))
+                  
+save(stocks.returns.daily,file="stocksreturns_daily.RData")                  
+  
+# Index Returns monthly                  
+index.returns <- index.prices %>% 
+  tq_transmute(select = adjusted,mutate_fun = periodReturn,
+               period="monthly", 
+               type="arithmetic") %>%
+  mutate(date=as.yearmon(date))
+                  
+# Factor Returns monthly (already)
+factors.returns <- factors %>% 
+  mutate(price=price/100) %>%
+  mutate(date=as.yearmon(date)) 
+
+# Show first 5 enteries
+stocks.prices.monthly %>% 
+  ungroup() %>% 
+  slice(1:5) 
+
+stocks.returns %>% 
+  ungroup() %>% 
+  slice(1:5)
+
+index.returns %>% 
+  ungroup() %>% 
+  slice(1:5) 
+
+factors.returns %>% 
+  ungroup() %>% 
+  slice(1:5)
+
+# Merging data together
+first.merge <- merge(stocks.prices.monthly,
+                     stocks.returns, 
+                     by = c("symbol","date"))
+
+stocks.final <- merge(merge(first.merge,index.returns, 
+                            by = "date"),
+                      factors.returns, by= "date")
+
+stocks.returns.daily
+stocks.returns
+```
+
+
+
+# Exercise 3: Plotting Data
+
+Carefully work through `vignette("TQ04-charting-with-tidyquant")` and create plots using [ggplot](https://ggplot2.tidyverse.org/) from the tidyverse. 
+
+1) Select four assets to highlight all functions that are important for you!
+
+```{r}
+
+# Exercise 3: Plotting Data
+ 
+# 1) Select four assets 
+getSymbols(Symbols = "AMZN", from="2006-01-01", to=Sys.time(), periodicity="monthly")
+getSymbols(Symbols = "AAPL", from="2006-01-01", to=Sys.time(), periodicity="monthly")
+getSymbols(Symbols = "MSFT", from="2006-01-01", to=Sys.time(), periodicity="monthly")
+getSymbols(Symbols = "GOOG", from="2006-01-01", to=Sys.time(), periodicity="monthly")
+
+stocks <- as.xts(data.frame(AAPL = AAPL[, "AAPL.Close"], 
+                            AMZN = AMZN[, "AMZN.Close"],
+                            MSFT = MSFT[, "MSFT.Close"], 
+                            GOOG = GOOG[, "GOOG.Close"]))
+head(stocks)
+
+# plotting the data
+plot(as.zoo(stocks), screens = 1, lty = 1:4, xlab = "Date", ylab = "Price")
+legend("right", c("AAPL", "AMZN", "MSFT", "GOOG"), lty = 1:4, cex = 0.5)
+
+
+vecst<-data.matrix(as.data.frame(stocks)) #convert xts into matrix
+
+boxplot(vecst) #boxplot of matrix
+
+h<-hist(vecst, breaks=10, col="red", xlab="ClosingPrice",
+   main="Histogram with Normal Curve")
+   xfit<-seq(min(vecst),max(vecst),length=40)
+yfit<-dnorm(xfit,mean=mean(vecst),sd=sd(vecst))
+yfit <- yfit*diff(h$mids[1:2])*length(vecst)
+lines(xfit, yfit, col="blue", lwd=2)
+
+qqnorm(stocks)
 
 ```
 
 ```{r}
-periodReturn
-to.period()
+
+#Get AAPL, AMZN, NFLX, FB STock Prices
+
+AAPL <- tq_get("AAPL", get = "stock.prices", from = "2015-01-01", to = "2019-12-31")
+
+AMZN <- tq_get("AMZN", get = "stock.prices", from = "2015-01-01", to = "2019-12-31")
+
+NFLX <- tq_get("NFLX", get = "stock.prices", from = "2015-01-01", to = "2019-12-31")
+
+FB <- tq_get("FB", get = "stock.prices", from = "2015-01-01", to = "2019-12-31")
+
+
+# boxplot of matrix
+boxplot(vecst) 
+
+
+h<-hist(vecst, breaks=10, col="red", xlab="ClosingPrice",
+   main="Histogram with Normal Curve")
+   xfit<-seq(min(vecst),max(vecst),length=40)
+yfit<-dnorm(xfit,mean=mean(vecst),sd=sd(vecst))
+yfit <- yfit*diff(h$mids[1:2])*length(vecst)
+lines(xfit, yfit, col="blue", lwd=2)
+
+qqnorm(stocks)
+
+# Histogram (incl. normal density)
+
+hist(AAPL$adjusted, # histogram APPLE
+ col="violet", # column color
+prob = TRUE, # show densities instead of frequencies
+ xlab = "Adjusted",
+ main = "APPLE")
+lines(density(AAPL$adjusted), # density plot
+ lwd = 2, # thickness of line
+ col = "pink")
+
+hist(AMZN$adjusted, # histogram AMAZON
+ col="peachpuff", # column color
+prob = TRUE, # show densities instead of frequencies
+ xlab = "Adjusted",
+ main = "AMAZON")
+lines(density(AMZN$adjusted), # density plot
+ lwd = 2, # thickness of line
+ col = "chocolate3")
+
+hist(NFLX$adjusted, # histogram NETFLIX
+ col="lightpink", # column color
+prob = TRUE, # show densities instead of frequencies
+ xlab = "Adjusted",
+ main = "NETFLIX")
+lines(density(NFLX$adjusted), # density plot
+ lwd = 2, # thickness of line
+ col = "cyan4")
+ 
+ hist(FB$adjusted, # histogram FACEBOOK
+ col="rosybrown1", # column color
+prob = TRUE, # show densities instead of frequencies
+ xlab = "Adjusted",
+ main = "FACEBOOK")
+lines(density(FB$adjusted), # density plot
+ lwd = 2, # thickness of line
+ col = "royalblue1")
+
+#Box-Plot
+boxplot(AAPL$adjusted, main="APPLE", xlab="Adjusted",col="lightsteelblue1", horizontal = TRUE)
+
+boxplot(AMZN$adjusted, main="AMAZON", xlab="Adjusted",col="yellow", horizontal = TRUE)
+
+boxplot(NFLX$adjusted, main="NETFLIX", xlab="Adjusted",col="red", horizontal = TRUE)
+
+boxplot(FB$adjusted, main="FACEBOOK", xlab="Adjusted",col="royalblue3", horizontal = TRUE)
+
+#gg-Plot
+
+qqnorm(AAPL$adjusted)
+qqline(AAPL$adjusted,col="royalblue",lwd=3) #to see if normal distribution
+
+qqnorm(AMZN$adjusted)
+qqline(AMZN$adjusted,col="yellow",lwd=3)
+
+qqnorm(NFLX$adjusted)
+qqline(NFLX$adjusted,col="red",lwd=3)
+
+qqnorm(FB$adjusted)
+qqline(FB$adjusted,col="blue",lwd=3)
+
 ```
 
 
-## Exercise 3: Plotting Data
-
-Carefully work through `vignette("TQ04-charting-with-tidyquant")` and create plots using [ggplot](https://ggplot2.tidyverse.org/) from the tidyverse. Select four assets to highlight all functions that are important for you!
-
-```{r}
-ggplot(aes()) + ... + facet_wrap()
-```
-
-Additionally we need statistical information, so we want to plot a histogram (including normal density), a box-plot and a qq-plot. Try to accumulate data in a meaningful way to not have 10 different plots!
-
-## Exercise 4: Statistics
+# Exercise 4: Statistics
 
 Here you might use all `tidyquant`-vignettes! My shiny-script here might also help you to get an idea: [www.riskindex.eu:3838/mci](www.riskindex.eu:3838/mci).
 
@@ -64,15 +531,213 @@ Here you might use all `tidyquant`-vignettes! My shiny-script here might also he
 
 For the four securities calculate all interesting statistics (measures of location, dispersion, skewness and kurtosis). Check returns for univariate (and multivariate) normality.
 
-```{r}
-table.Stats()
-table.DownsideRisk
-table.HigherMoments
-```
 
+
+```{r}
+Stocks.raw <- c("MSFT","AAPL","AMZN","GOOG") %>%
+    tq_get(get  = "stock.prices", from = "2000-01-01", to   = Sys.Date()) %>%
+    group_by(symbol)
+Stocks_ret_daily <- Stocks.raw %>%
+    tq_transmute(select = adjusted, mutate_fun = periodReturn,
+                 period = "daily", col_rename = "return", type="log")
+Stocks_ret_monthly <- Stocks.raw %>%
+    tq_transmute(select = adjusted, mutate_fun = periodReturn,
+                 period = "monthly", col_rename = "return", type="log")
+
+#geometric and arithmetic mean
+
+#monthly 
+
+Stocks_ret_monthly %>% summarize(geometric_mean=mean.geometric(return), arithmetic_mean=mean(return)) %>%
+          mutate_at(-1, round, 5) %>% t()
+
+
+#daily
+Stocks_ret_daily %>% summarize(geometric_mean=mean.geometric(return), arithmetic_mean=mean(return)) %>%
+          mutate_at(-1, round, 5) %>% t()
+
+
+#Skewness and kurtosis
+
+Stocks_ret_daily %>% summarize(Skewness=skewness(return), "Ex. Kurtosis"=kurtosis(return)) %>%
+          mutate_at(-1, round, 3) %>% t()
+
+
+#measures of spread
+#monthly
+Stocks_ret_monthly %>% summarize(Volatility=sd(return), Range=max(return)-min(return), IQR=IQR(return)) %>%
+          mutate_at(-1, round, 3) %>% t()
+
+#daily 
+Stocks_ret_daily %>% summarize(Volatility=sd(return), Range=max(return)-min(return), IQR=IQR(return)) %>%
+          mutate_at(-1, round, 3) %>% t()
+
+#Standard deviation - measures of spread financial risk
+
+#monthly
+Stocks_ret_monthly %>% summarize(Semideviation=SemiDeviation(return), 
+  "VaR(0.05)"=VaR(return,p=0.05), "CVaR(0.05)"=CVaR(return,p=0.05)) %>%
+  mutate_at(-1, round, 3) %>% t()
+  
+#daily
+Stocks_ret_daily %>% summarize(Semideviation=SemiDeviation(return), 
+  "VaR(0.05)"=VaR(return,p=0.05), "CVaR(0.05)"=CVaR(return,p=0.05)) %>%
+  mutate_at(-1, round, 3) %>% t()
+
+
+
+
+```
 ### Exercise 4.2 Between securities and with index
 
 Plot all securities vis-a-vis the index. Include a regression line and regression information. Can you plot rolling correlations between assets (and/or the index)?
+```{r}
+#grouping the 4 securities, getting monthly returns
+Ra<-c("AAPL","AMZN","MSFT","GOOG")%>%
+tq_get(get="stock.prices",from="2016-12-31",to="2019-12-31")%>%
+group_by(symbol)%>%
+tq_transmute(select     = adjusted, mutate_fun = periodReturn,period     = "monthly",col_rename = "Ra")
+
+#monthly Returns for the Dow Jones
+Rb <- c("DJI") %>%
+    tq_get(get  = "stock.prices",from="2016-12-31",to="2019-12-31")  %>%
+    tq_transmute(select     = adjusted,
+                 mutate_fun = periodReturn,
+                 period     = "monthly",
+                 col_rename = "Rb")
+RaRb <- left_join(Ra, Rb, by = c("date" = "date"))
+
+RaRb %>%
+    tq_performance(Ra = Ra, Rb = Rb, performance_fun = table.CAPM)
+
+#AAPL vs Dow Jones    
+stock_prices <- c("DJI", "AAPL") %>%
+    tq_get(get  = "stock.prices",
+         from="2016-12-31",to="2019-12-31") %>%
+    group_by(symbol)
+
+stock_pairs <- stock_prices %>%
+    tq_transmute(select     = adjusted,
+                 mutate_fun = periodReturn,
+                 period     = "daily",
+                # type       = "log",
+                 col_rename = "returns") %>%
+    spread(key = symbol, value = returns)
+    
+stock_pairs %>%
+  ggplot(aes(x = DJI, y = AAPL)) +
+    geom_point(color = palette_light()[[1]], alpha = 0.5) +
+    geom_smooth(method = "lm") +
+    labs(title = "Returns Relationship of Apple and Dow Jones 2016/12/31 to 2019/12/31 - Method: lm") +
+    theme_tq()
+
+#AMZN vs Dow Jones
+stock_prices <- c("DJI", "AMZN") %>%
+    tq_get(get  = "stock.prices",
+         from="2016-12-31",to="2019-12-31") %>%
+    group_by(symbol)
+
+stock_pairs <- stock_prices %>%
+    tq_transmute(select     = adjusted,
+                 mutate_fun = periodReturn,
+                 period     = "daily",
+                # type       = "log",
+                 col_rename = "returns") %>%
+    spread(key = symbol, value = returns)
+
+stock_pairs %>%
+    ggplot(aes(x = DJI, y = AMZN)) +
+    geom_point(color = palette_light()[[1]], alpha = 0.5) +
+    geom_smooth(method = "lm") +
+    labs(title = "Returns Relationship of Amazon and Dow Jones 2016/12/31 to 2019/12/31 - Method: lm") +
+    theme_tq()
+    
+#MSFT vs Dow Jones
+stock_prices <- c("DJI", "MSFT") %>%
+    tq_get(get  = "stock.prices",
+         from="2016-12-31",to="2019-12-31") %>%
+    group_by(symbol)
+
+stock_pairs <- stock_prices %>%
+    tq_transmute(select     = adjusted,
+                 mutate_fun = periodReturn,
+                 period     = "daily",
+                # type       = "log",
+                 col_rename = "returns") %>%
+    spread(key = symbol, value = returns)
+
+stock_pairs %>%
+    ggplot(aes(x = DJI, y = MSFT)) +
+    geom_point(color = palette_light()[[1]], alpha = 0.5) +
+    geom_smooth(method = "lm") +
+    labs(title = "Returns Relationship of Microsoft and Dow Jones 2016/12/31 to 2019/12/31 - Method: lm") +
+    theme_tq()
+    
+#Google vs Dow Jones
+
+stock_prices <- c("DJI", "GOOG") %>%
+    tq_get(get  = "stock.prices",
+         from="2016-12-31",to="2019-12-31") %>%
+    group_by(symbol)
+
+stock_pairs <- stock_prices %>%
+    tq_transmute(select     = adjusted,
+                 mutate_fun = periodReturn,
+                 period     = "daily",
+                # type       = "log",
+                 col_rename = "returns") %>%
+    spread(key = symbol, value = returns)
+
+stock_pairs %>%
+    ggplot(aes(x = DJI, y = GOOG)) +
+    geom_point(color = palette_light()[[1]], alpha = 0.5) +
+    geom_smooth(method = "lm") +
+    labs(title = "Returns Relationship of Google and Dow Jones 2016/12/31 to 2019/12/31 - Method: lm") +
+    theme_tq()
+
+
+#Can you plot rolling correlations between assets (and/or the index)?
+Ra <- c("AAPL", "GOOG", "MSFT","AMZN") %>%
+    tq_get(get  = "stock.prices",
+          from = "2013-12-31",
+           to   = "2018-12-31") %>% 
+    group_by(symbol) %>%
+    tq_transmute(select     = adjusted,
+                 mutate_fun = periodReturn,
+                 period     = "monthly",
+                  type       = "log",
+                 col_rename = "Ra")
+
+Rb <- c("DJI") %>%
+    tq_get(get  = "stock.prices",
+           from = "2013-12-31",
+           to   = "2018-12-31") %>%
+    tq_transmute(select     = adjusted,
+                 mutate_fun = periodReturn,
+                 period     = "monthly",
+                  type       = "log",
+                 col_rename = "Rb")
+
+RaRb <- left_join(Ra, Rb, by = c("date" = "date"))
+
+rolling_corr <- RaRb %>%
+    tq_transmute_xy(x          = Ra,
+                    y          = Rb,
+                    mutate_fun = runCor,
+                    n          = 6,
+                    col_rename = "rolling.corr.6")
+
+rolling_corr %>%
+    ggplot(aes(x = date, y = rolling.corr.6, color = symbol)) +
+    geom_hline(yintercept = 0, color = palette_light()[[1]]) +
+    geom_line(size = 1) +
+    labs(title = "Six Month Rolling Correlations to Dow Jones (2013/12/31 to 2018/12/31)",
+         x = "", y = "Correlation", color = "") +
+    facet_wrap(~ symbol, ncol = 2) +theme_tq() +
+    scale_color_tq()
+
+
+```
 
 ```{r}
 table.CAPM
@@ -82,4 +747,97 @@ table.CAPM
 
 Create multiple portfolios using `tq_portfolio()` (e.g. an equally weighted one, a market-value weighted one, and one where you create a trading strategy according to your liking). DO a performance analysis a la `vignette("TQ05-performance-analysis-with-tidyquant")`.
 
+To make a portfolio I have to choose assets. Therefore I took the monthly stock prices from Apple, Google, Netflix and Amazon from 31.12.2013 to 31.12.2019.
 
+```{r}
+stock_returns_monthly <- c("AAPL", "GOOG", "NFLX", "AMZN") %>%
+  tq_get(get  = "stock.prices",
+         from = "2013-12-31",
+         to   = "2019-12-31") %>%
+  group_by(symbol) %>%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = "monthly", 
+               col_rename = "Ra")
+```
+
+# Creating a repetition for three portfolios
+```{r}
+stock_returns_monthly_multi <- stock_returns_monthly %>%
+  tq_repeat_df(n = 3)
+```
+
+# Market-value weighted Portfolio, Using the market values as of 13th September 2019
+```{r}
+MV_AAPL<-988.57
+MV_GOOG<-859.51
+MV_NFLX<-128.79
+MV_AMZN<-909.84
+MV_sum<-MV_NFLX+MV_AAPL+MV_AMZN+MV_GOOG
+```
+
+#Now I create the vector for the equally weighted one (25% for each stock). 
+One portfolio is equally weighted with 25% and the 3rd portfolio is weighted after my preferences
+
+```{r}
+weights <- c(
+  0.25, 0.25, 0.25, 0.25, 
+  MV_AAPL/MV_sum, MV_GOOG/MV_sum, MV_NFLX/MV_sum, MV_AMZN/MV_sum, 
+  0.2, 0.4, 0.2, 0.2)
+```
+
+#To measure the performance of the 3 portfolios I choose the SP500 as baseline returns
+```{r}
+baseline_returns_monthly <- "^GSPC" %>%
+  tq_get(get  = "stock.prices",
+         from = "2013-12-31",
+         to   = "2019-12-31") %>%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = "monthly", 
+               col_rename = "Rb")
+```
+ 
+
+#The next step is to create the portfolios according to the weight table
+```{r}
+stocks <- c("AAPL", "GOOG", "NFLX", "AMZN")
+weights_table <-  tibble(stocks) %>%
+  tq_repeat_df(n = 3) %>%
+  bind_cols(tibble(weights)) %>%
+  group_by(portfolio)
+```
+
+```{r}
+weights_table
+```
+#Creating the returns for the portfolios
+```{r}
+portfolio_returns_monthly_multi <- stock_returns_monthly_multi %>%
+  tq_portfolio(assets_col  = symbol, 
+               returns_col = Ra, 
+               weights     = weights_table, 
+               col_rename  = "Ra")
+portfolio_returns_monthly_multi
+```
+#Combining the portfolios with the baseline
+```{r}
+RaRb_multiple_portfolio <- left_join(portfolio_returns_monthly_multi, 
+                                     baseline_returns_monthly,
+                                     by = "date")
+```                                     
+#A performance analysis can be done now --> CAPM table is to be created
+```{r}
+RaRb_multiple_portfolio %>%
+  tq_performance(Ra = Ra, Rb = Rb, performance_fun = table.CAPM)
+```  
+# Sharpe Ratio Table
+```{r}
+RaRb_multiple_portfolio %>%
+  tq_performance(Ra = Ra, Rb = NULL, performance_fun = SharpeRatio)
+```
+# Table Stats
+```{r}
+RaRb_multiple_portfolio %>%
+  tq_performance(Ra = Ra, Rb = NULL, performance_fun = table.Stats)
+```
